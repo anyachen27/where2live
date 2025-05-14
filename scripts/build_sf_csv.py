@@ -43,7 +43,7 @@ bnb["price"] = (
       .astype(str)
       .str.replace(r"[^\d.]", "", regex=True)       # keep digits & dot
       .replace("", np.nan)                          # empty → NaN
-      .astype(float)                                # safe now
+      .astype(float)
 )
 
 bnb = bnb.dropna(subset=["price"])
