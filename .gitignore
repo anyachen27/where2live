@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.env
+.venv
+env/
+venv/
+ENV/
+
+# macOS
+.DS_Store
+
+# Project-specific
+data/
+blobs/
+chroma_db/
+
+# IDE
+.vscode/
+.idea/ 
