@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Where2Live Simple Frontend</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }
+        .container { background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        label { display: block; margin-top: 10px; font-weight: bold; }
+        input[type="number"], input[type="text"] { width: calc(100% - 22px); padding: 10px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        button { background-color: #007bff; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 20px; }
+        button:hover { background-color: #0056b3; }
+        #results { margin-top: 20px; padding: 10px; background-color: #e9ecef; border-radius: 4px; }
+        h2 { color: #007bff; }
+        .listing { border-bottom: 1px solid #ccc; padding-bottom: 10px; margin-bottom: 10px; }
+        .listing:last-child { border-bottom: none; }
+        .listing p { margin: 5px 0; }
+        .error { color: red; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Where2Live Recommendation Finder</h2>
+        <p style="font-size: 0.95em; color: #555;">
+          <em>Note: The national school poverty average is 500.</em>
+        </p>
+        <form id="queryForm">
+            <label for="max_price">Max Price ($):</label>
+            <input type="number" id="max_price" name="max_price" value="250" step="0.01" required>
+
+            <label for="max_school_pov">Max School Poverty:</label>
+            <input type="number" id="max_school_pov" name="max_school_pov" value=900" step="0.1" required>
+
+            <label for="min_facilities">Min Nearby Facilities:</label>
+            <input type="number" id="min_facilities" name="min_facilities" value="1" step="1" required>
+
+            <label for="comments">Comments / Preferences:</label>
+            <input type="text" id="comments" name="comments" value="Looking for a quiet place near good schools">
+
+            <button type="submit">Get Recommendations</button>
+        </form>
+
+        <h2>Results</h2>
+        <div id="results">
+            <p>Submit your preferences to see recommendations here.</p>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('queryForm').addEventListener('submit', async function(event) {
+            event.preventDefault();
+
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<p>Loading...</p>';
+
+            const formData = {
+                max_price: parseFloat(document.getElementById('max_price').value),
+                max_school_pov: parseFloat(document.getElementById('max_school_pov').value),
+                min_facilities: parseInt(document.getElementById('min_facilities').value),
+                comments: document.getElementById('comments').value
+            };
+
+            try {
+                const response = await fetch('http://127.0.0.1:8000/suggest', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify(formData)
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ detail: 'Unknown error occurred, server did not return valid JSON.' }));
+                    throw new Error(`HTTP error! status: ${response.status}, message: ${errorData.detail || 'No error detail'}`);
+                }
+
+                const data = await response.json();
+                
+                resultsDiv.innerHTML = ''; // Clear previous results
+
+                if (data.answer && Array.isArray(data.answer)) {
+                    if (data.answer.length === 0) {
+                        resultsDiv.innerHTML = '<p>No specific recommendations from LLM, or no listings matched filters.</p>';
+                    }
+                    data.answer.forEach(item => {
+                        const itemDiv = document.createElement('div');
+                        itemDiv.classList.add('listing');
+                        if (item.error) {
+                            itemDiv.innerHTML = `<p class="error"><strong>Error in recommendation:</strong> ${item.error}</p>`;
+                            if(item.details) itemDiv.innerHTML += `<p>Details: ${item.details}</p>`;
+                        } else {
+                            itemDiv.innerHTML = `
+                                <p><strong>Location:</strong> ${item.location || 'N/A'}</p>
+                                <p><strong>Price:</strong> $${item.price !== undefined ? item.price : 'N/A'}/night</p>
+                                <p><strong>School Poverty:</strong> ${item.school_poverty !== undefined ? item.school_poverty.toFixed(1) : 'N/A'}</p>
+                                <p><strong>Facilities Nearby:</strong> ${item.facility_cnt !== undefined ? item.facility_cnt : 'N/A'}</p>
+                                <p><strong>Justification:</strong> ${item.justification || 'N/A'}</p>
+                            `;
+                        }
+                        resultsDiv.appendChild(itemDiv);
+                    });
+                } else {
+                     resultsDiv.innerHTML = '<p>Received an unexpected data format from the server.</p><pre>' + JSON.stringify(data, null, 2) + '</pre>';
+                }
+
+                // Display raw hits as well (optional)
+                if (data.hits && data.hits.length > 0) {
+                    const hitsHeader = document.createElement('h3');
+                    hitsHeader.textContent = 'Top Matched Listings (from database)';
+                    resultsDiv.appendChild(hitsHeader);
+                    data.hits.forEach(hit => {
+                        const hitDiv = document.createElement('div');
+                        hitDiv.classList.add('listing');
+                        hitDiv.innerHTML = `
+                            <p><strong>Location:</strong> ${hit.location}</p>
+                            <p><strong>Price:</strong> $${hit.price}/night</p>
+                            <p><strong>School Poverty:</strong> ${hit.school_poverty.toFixed(1)}</p>
+                            <p><strong>Facilities Nearby:</strong> ${hit.facility_cnt}</p>
+                            <p><strong>Notes:</strong> ${hit.notes || 'N/A'}</p>
+                        `;
+                        resultsDiv.appendChild(hitDiv);
+                    });
+                }
+
+            } catch (error) {
+                resultsDiv.innerHTML = `
+                    <p class="error"><strong>Failed to fetch recommendations:</strong> ${error.message}</p>
+                    <p>Make sure the FastAPI server is running at http://127.0.0.1:8000 and check the browser console for more details.</p>
+                `;
+                console.error('Error:', error);
+            }
+        });
+    </script>
+</body>
+</html> 
