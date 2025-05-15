@@ -8,14 +8,15 @@ from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 import traceback
 import os, requests, textwrap
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import re
 import copy
 
 CHROMA_DIR = pathlib.Path("chroma_db")
+COLLECTION_NAME = "where2live_houses"
 client = chromadb.PersistentClient(path=str(CHROMA_DIR))
 try:
-    coll = client.get_collection("where2live_airbnb")
+    coll = client.get_collection(COLLECTION_NAME)
     print(f"Successfully connected to collection. Count: {coll.count()}")
     # Get a sample of the data to verify its structure
     sample = coll.query(
@@ -30,7 +31,7 @@ except Exception as e:
     print(f"Error getting collection: {e}")
     # Try to create it if it doesn't exist
     try:
-        coll = client.create_collection("where2live_airbnb")
+        coll = client.create_collection(COLLECTION_NAME)
         print("Created new collection")
     except Exception as e:
         print(f"Error creating collection: {e}")
@@ -38,10 +39,10 @@ except Exception as e:
 
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
 
+# --- New Query Model ---
 class Query(BaseModel):
-    max_price: float
-    max_school_pov: float
-    min_facilities: int = 0
+    weights: Dict[str, int]
+    filters: Optional[Dict[str, Any]] = None
     comments: str = ""
 
 app = FastAPI()
@@ -69,44 +70,41 @@ def gmi_chat(prompt: str) -> str:  # Return type is still str, as LLM outputs JS
     payload = {
         "model": GMI_MODEL,
         "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are Where2Live, an expert housing advisor.\n\n"
-                    "TASK\n"
-                    "‣ Examine the *candidate_listings* JSON and the *user_prefs* JSON.\n"
-                    "‣ Return **exactly three** listings in a JSON array called `recommendations`—no extra keys, no prose outside the array.\n\n"
-                    "RULES FOR EACH RECOMMENDATION OBJECT\n"
-                    "  • `location`          – copy from listing\n"
-                    "  • `price`             – nightly price (number)\n"
-                    "  • `school_poverty`    – numeric value\n"
-                    "  • `facility_cnt`      – numeric value\n"
-                    "  • `notes`             – (optional) extra info about the listing, may be cited in justification if relevant\n"
-                    "  • `justification`     – ≤30 words; cite price, school-poverty, facility_cnt, and notes if relevant. If a listing is the overall *lowest price*, *lowest school-poverty*, or *highest facility count*, say so (e.g. 'lowest price of all').\n\n"
-                    "SELECTION CRITERIA\n"
-                    "  1. Must satisfy all hard limits in *user_prefs* (max_price, max_school_pov, min_facilities).\n"
-                    "  2. Among valid listings, rank by:\n"
-                    "     • lowest price\n"
-                    "     • THEN lowest school-poverty\n"
-                    "     • THEN highest facility_cnt.\n"
-                    "  3. If <3 listings meet limits, return as many as possible.\n\n"
-                    "OUTPUT FORMAT (no deviation):\n"
-                    "[\n"
-                    "  {\n"
-                    "    \"location\": \"…\",\n"
-                    "    \"price\": 123,\n"
-                    "    \"school_poverty\": 12.3,\n"
-                    "    \"facility_cnt\": 4,\n"
-                    "    \"notes\": \"…\",\n"
-                    "    \"justification\": \"…\"\n"
-                    "  }, … (total 3) …\n"
-                    "]"
-                )
-            },
-            { "role": "user", "content": prompt }
+            {"role": "system",
+             "content": (
+                "You are Where2Live, an expert housing advisor.\n\n"
+                "TASK\n"
+                "‣ Examine the *candidate_listings* JSON and the *user_prefs* JSON (including attribute weights and filters).\n"
+                "‣ Return exactly three listings in a JSON array called recommendations—no extra keys, no prose outside the array.\n\n"
+                "RULES FOR EACH RECOMMENDATION OBJECT\n"
+                "  • Include all listing fields.\n"
+                "  • Add a justification (≤30 words) referencing the most important attributes (by user weight) and any filters applied.\n\n"
+                "SELECTION CRITERIA\n"
+                "  1. Must satisfy all hard limits in user_prefs.filters.\n"
+                "  2. Among valid listings, rank by the weighted sum of attributes (higher weight = more important).\n"
+                "  3. If <3 listings meet limits, return as many as possible.\n\n"
+                "OUTPUT FORMAT (no deviation):\n"
+                "[\n"
+                "  {\n"
+                "    \"house_address\": \"...\",\n"
+                "    \"zip_code\": \"...\",\n"
+                "    \"price\": ...,\n"
+                "    \"recreational_facilities\": \"...\",\n"
+                "    \"poverty_rate\": ...,\n"
+                "    \"number_of_beds\": ...,\n"
+                "    \"number_of_baths\": ...,\n"
+                "    \"school_ranking\": ...,\n"
+                "    \"neighborhood_crime_rate\": ...,\n"
+                "    \"common_industries\": \"...\",\n"
+                "    \"other_notes\": \"...\",\n"
+                "    \"justification\": \"...\"\n"
+                "  }, ... (total 3) ...\n"
+                "]"
+            )},
+            {"role": "user", "content": prompt}
         ],
         "temperature": 0.0,  # Set to 0.0 for deterministic output
-        "max_tokens": 600
+        "max_tokens": 800
     }
 
     r = requests.post(
@@ -119,161 +117,96 @@ def gmi_chat(prompt: str) -> str:  # Return type is still str, as LLM outputs JS
         raise RuntimeError(f"GMI error {r.status_code}: {r.text[:200]}")
     return r.json()["choices"][0]["message"]["content"].strip()
 
-# ---------- prompt builder ---------------------------------------------
-def build_prompt(user_params: Dict[str, Any], rows: List[Dict[str, Any]]) -> str:
-    context = {row["location"]: {
-        "price": row["price"],
-        "school_poverty": row["school_poverty"],
-        "facility_cnt": row["facility_cnt"]
-    } for row in rows}
+# --- Helper to build weighted query string ---
+def build_weighted_query(user_weights: Dict[str, int], user_filters: Dict[str, Any], comments: str) -> str:
+    # Build a string that emphasizes important attributes
+    parts = []
+    for k, w in user_weights.items():
+        if w > 0:
+            parts.append((f"{k} " * w).strip())
+    filter_str = " ".join(f"{k}:{v}" for k, v in (user_filters or {}).items())
+    return f"{comments} {filter_str} {' '.join(parts)}"
 
-    return textwrap.dedent(f"""\
-        User preferences: {json.dumps(user_params)}.
-
-        Below are candidate Airbnb listings (JSON). Rank the best 3 and justify
-        in under 80 words. Mention price, school-poverty %, and facility count.
-
-        Listings:
-        {json.dumps(context, indent=2)}
-    """)
-
-
-# def llm_stub(rows, params):
-#     """Simple template until GMI chat is live."""
-#     lines = [f"Recommendations for params {params}:"]
-#     for r in rows:
-#         lines.append(
-#             f"- {r['location']} • ${r['price']}/night • "
-#             f"school poverty {r['school_poverty']:.1f}% • "
-#             f"{r['facility_cnt']} facilities nearby"
-#         )
-#     return "\\n".join(lines)
-
-
-
-# @app.post("/suggest")
-# def suggest(q: Query):
-#     try:
-#         qvec = embedder.encode(f"{q.comments} budget {q.max_price}").tolist()
-#         filt = {
-#             "price":          {"$lte": q.max_price},
-#             "school_poverty": {"$lte": q.max_school_pov},
-#             "facility_cnt":   {"$gte": q.min_facilities}
-#         }
-#         res   = coll.query(query_embeddings=[qvec], n_results=30, filter=filt)
-#         metas = res["metadatas"][0][:5]          # top-5
-
-#         prompt = build_prompt(q.dict(), metas)
-#         try:
-#             answer = gmi_chat(prompt)
-#         except Exception as e:
-#             # graceful fallback if API down
-#             answer = "LLM unavailable.\\n" + \\
-#                      "\\n".join(f"- {m['location']} (${m['price']})" for m in metas)
-
-#         return {"answer": answer, "hits": metas}
-
-#     except Exception as e:
-#         traceback.print_exc()
-#         raise HTTPException(status_code=500, detail=str(e))
-    
-
-# The (previously commented out) suggest function that uses 'where'
-# will be uncommented and corrected in the next step.
-
+# --- Suggest endpoint ---
 @app.post("/suggest")
 def suggest(q: Query):
     try:
-        query_text = f"{q.comments} facilities {q.min_facilities}+ price {q.max_price}"
+        # Build weighted query string
+        query_text = build_weighted_query(q.weights, q.filters, q.comments)
         qvec = embedder.encode(query_text).tolist()
 
-        # Optional: query without filters first to see if GMI should be called at all
-        # print("\nTrying query without filters first...")
-        # no_filter_res = coll.query(
-        #     query_embeddings=[qvec],
-        #     n_results=5
-        # )
-        # print("Sample result without filters:", json.dumps(no_filter_res["metadatas"][0][0] if no_filter_res["metadatas"] and no_filter_res["metadatas"][0] else "No data", indent=2))
+        # Build filter for ChromaDB
+        chroma_filter = {}
+        if q.filters:
+            for k, v in q.filters.items():
+                if isinstance(v, (int, float)):
+                    # Guess filter type by key
+                    if k.startswith("max_"):
+                        field = k[4:]
+                        chroma_filter[field] = {"$lte": v}
+                    elif k.startswith("min_"):
+                        field = k[4:]
+                        chroma_filter[field] = {"$gte": v}
+                    else:
+                        chroma_filter[k] = v
+                else:
+                    chroma_filter[k] = v
 
-        where_conditions = {
-            "$and": [
-                {"price": {"$lte": q.max_price}},
-                {"school_poverty": {"$lte": q.max_school_pov}},
-                {"facility_cnt": {"$gte": q.min_facilities}}
-            ]
-        }
-
-        # print(f"\nQuerying with conditions: {json.dumps(where_conditions, indent=2)}")
+        where = {"$and": [{k: v} for k, v in chroma_filter.items()]} if chroma_filter else None
         res = coll.query(
             query_embeddings=[qvec],
-            n_results=25, # Fetch more for GMI to pick from, GMI will select top 3
-            where=where_conditions
+            n_results=25,
+            where=where
         )
-        # print(f"Query returned {len(res['metadatas'][0]) if res['metadatas'] and res['metadatas'][0] else 0} results")
-        
-        if not res["metadatas"] or not res["metadatas"][0]:
-            answer = "No listings found matching your filtering criteria."
-            return {"answer": answer, "hits": []}
-            
-        # Pass top 5 relevant (and filtered) listings to GMI
         metas_for_gmi = copy.deepcopy(res["metadatas"][0][:5])
+
+        # Annotate for lowest/highest
         if metas_for_gmi:
-            min_price = min(m['price'] for m in metas_for_gmi)
-            min_school_poverty = min(m['school_poverty'] for m in metas_for_gmi)
-            max_facility_cnt = max(m['facility_cnt'] for m in metas_for_gmi)
+            # Only consider numeric fields for lowest/highest
+            numeric_fields = [k for k, v in metas_for_gmi[0].items() if isinstance(v, (int, float))]
+            for field in numeric_fields:
+                values = [m[field] for m in metas_for_gmi]
+                min_val = min(values)
+                max_val = max(values)
+                for m in metas_for_gmi:
+                    notes = []
+                    if m[field] == min_val:
+                        notes.append(f"lowest {field}")
+                    if m[field] == max_val:
+                        notes.append(f"highest {field}")
+                    m.setdefault("note", "")
+                    if notes:
+                        m["note"] += (", " if m["note"] else "") + ", ".join(notes)
             for m in metas_for_gmi:
-                notes = []
-                if m['price'] == min_price:
-                    notes.append("lowest price")
-                if m['school_poverty'] == min_school_poverty:
-                    notes.append("lowest school poverty")
-                if m['facility_cnt'] == max_facility_cnt:
-                    notes.append("highest facility count")
-                m['note'] = ", ".join(notes) if notes else ""
-                # Ensure 'notes' field is present for LLM context
-                if 'notes' not in m:
-                    m['notes'] = ""
+                if "notes" not in m:
+                    m["notes"] = ""
 
-        prompt_for_gmi = build_prompt(q.dict(), metas_for_gmi)
-        llm_recommendations = [] # To store the list of recommendation dicts
+        # Build prompt for LLM
+        def build_prompt(user_params, rows):
+            context = {row["house_address"]: row for row in rows}
+            return textwrap.dedent(f"""
+                User preferences: {json.dumps(user_params)}.
 
+                Below are candidate house listings (JSON). Rank the best 3 and justify in under 80 words. Mention all relevant attributes and user weights. Each object should include all fields and a justification.
+
+                Listings:
+                {json.dumps(context, indent=2)}
+            """)
+
+        prompt_for_gmi = build_prompt({"weights": q.weights, "filters": q.filters, "comments": q.comments}, metas_for_gmi)
+
+        # --- LLM call and output parsing ---
+        llm_recommendations = []
         try:
             raw_llm_output_str = gmi_chat(prompt_for_gmi)
-            # Remove Markdown code block formatting if present (triple backticks, optional 'json' label, case-insensitive)
             cleaned_output = re.sub(r"^```(?:json)?\s*|```$", "", raw_llm_output_str.strip(), flags=re.IGNORECASE | re.MULTILINE).strip()
-            try:
-                # Attempt to parse the cleaned LLM's string output as JSON
-                llm_recommendations = json.loads(cleaned_output)
-                if not isinstance(llm_recommendations, list): # Basic validation
-                    print(f"LLM output was valid JSON but not a list: {llm_recommendations}")
-                    raise ValueError("LLM output not a list as expected.")
-            except json.JSONDecodeError as e_json:
-                print(f"LLM output was not valid JSON. Error: {e_json}. Raw output: {raw_llm_output_str}")
-                # Fallback: use the raw string if it's not JSON, or create a custom error structure
-                llm_recommendations = [{"error": "LLM did not return valid JSON.", "details": raw_llm_output_str}]
-            except ValueError as e_val: # Handles the "not a list" case
-                 llm_recommendations = [{"error": "LLM output not in expected format.", "details": str(e_val)}]
+            llm_recommendations = json.loads(cleaned_output)
+            if not isinstance(llm_recommendations, list):
+                raise ValueError("LLM output not a list as expected.")
+        except Exception as e:
+            llm_recommendations = [{"error": "LLM did not return valid JSON.", "details": str(e)}]
 
-        except Exception as e_gmi:
-            # Graceful fallback if GMI API down or other GMI call error
-            print(f"GMI chat error: {e_gmi}")
-            llm_recommendations = [{
-                "error": "LLM summary unavailable.",
-                "details": str(e_gmi),
-                "fallback_message": "Displaying top matches based on your filters.",
-                "matches": [
-                    {
-                        "location": m['location'],
-                        "price": m['price'],
-                        "school_poverty": f"{m['school_poverty']:.0f}%",
-                        "facility_cnt": m['facility_cnt'],
-                        "justification": "Direct match based on filters (LLM unavailable)."
-                    } for m in metas_for_gmi
-                ]
-            }]
-
-        return {"answer": llm_recommendations, "hits": metas_for_gmi} # Return the structured recommendations
-
+        return {"answer": llm_recommendations, "hits": metas_for_gmi}
     except Exception as e:
-        traceback.print_exc()  # This will print to server logs
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

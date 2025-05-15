@@ -82,3 +82,30 @@ sample = coll.query(
 for i, meta in enumerate(sample["metadatas"][0]):
     print(f"\nSample {i+1} from Chroma:")
     print(json.dumps(meta, indent=2))
+
+# For now, use equal weights for all fields. Backend will update for user input.
+def weighted_text(blob, weights=None):
+    if weights is None:
+        weights = {k: 1 for k in blob.keys()}
+    text = []
+    for k, v in blob.items():
+        w = weights.get(k, 1)
+        if w > 0 and isinstance(v, (str, int, float)):
+            text.append(f"{str(k)}: {str(v)} " * int(w))
+    return " ".join(text)
+
+blobs = list(BLOB_DIR.glob("*.json"))
+print(f"Embedding {len(blobs)} blobs...")
+
+for blob_path in blobs:
+    blob = json.loads(blob_path.read_text())
+    doc_id = str(blob.get("house_address", blob_path.stem))
+    text = weighted_text(blob)  # Equal weights for now
+    emb = embedder.encode(text).tolist()
+    coll.add(
+        documents=[text],
+        embeddings=[emb],
+        metadatas=[blob],
+        ids=[doc_id]
+    )
+print("Done embedding blobs.")

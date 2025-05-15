@@ -8,7 +8,10 @@
         body { font-family: sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }
         .container { background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
         label { display: block; margin-top: 10px; font-weight: bold; }
-        input[type="number"], input[type="text"] { width: calc(100% - 22px); padding: 10px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        input[type="number"], input[type="text"], select { width: calc(100% - 22px); padding: 10px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        .slider-label { display: flex; justify-content: space-between; align-items: center; }
+        .slider-value { margin-left: 10px; font-weight: normal; }
+        .slider { width: 100%; }
         button { background-color: #007bff; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 20px; }
         button:hover { background-color: #0056b3; }
         #results { margin-top: 20px; padding: 10px; background-color: #e9ecef; border-radius: 4px; }
@@ -22,45 +25,94 @@
 <body>
     <div class="container">
         <h2>Where2Live Recommendation Finder</h2>
-        <p style="font-size: 0.95em; color: #555;">
-          <em>Note: The national school poverty average is 500.</em>
-        </p>
         <form id="queryForm">
-            <label for="max_price">Max Price ($):</label>
-            <input type="number" id="max_price" name="max_price" value="250" step="0.01" required>
-
-            <label for="max_school_pov">Max School Poverty:</label>
-            <input type="number" id="max_school_pov" name="max_school_pov" value=900" step="0.1" required>
-
-            <label for="min_facilities">Min Nearby Facilities:</label>
-            <input type="number" id="min_facilities" name="min_facilities" value="1" step="1" required>
-
+            <h3>Rank the importance of each attribute (1 = not important, 10 = most important):</h3>
+            <div id="weightsSection"></div>
+            <h3>Set hard filters (optional):</h3>
+            <div id="filtersSection"></div>
             <label for="comments">Comments / Preferences:</label>
-            <input type="text" id="comments" name="comments" value="Looking for a quiet place near good schools">
-
+            <input type="text" id="comments" name="comments" value="Looking for a safe, family-friendly neighborhood with good schools and parks.">
             <button type="submit">Get Recommendations</button>
         </form>
-
         <h2>Results</h2>
         <div id="results">
             <p>Submit your preferences to see recommendations here.</p>
         </div>
     </div>
-
     <script>
+        // Define the attributes from the new dataset
+        const attributes = [
+            { key: 'price', label: 'Price', filter: 'max', type: 'number' },
+            { key: 'recreational_facilities', label: 'Recreational Facilities', filter: null, type: 'text' },
+            { key: 'poverty_rate', label: 'Poverty Rate', filter: 'max', type: 'number' },
+            { key: 'number_of_beds', label: 'Number of Beds', filter: 'min', type: 'number' },
+            { key: 'number_of_baths', label: 'Number of Baths', filter: 'min', type: 'number' },
+            { key: 'school_ranking', label: 'School Ranking', filter: 'min', type: 'number' },
+            { key: 'neighborhood_crime_rate', label: 'Neighborhood Crime Rate', filter: 'max', type: 'number' },
+            { key: 'common_industries', label: 'Common Industries', filter: null, type: 'text' }
+        ];
+        // Display-only fields
+        const displayFields = [
+            { key: 'house_address', label: 'House Address' },
+            { key: 'zip_code', label: 'Zip Code' },
+            { key: 'other_notes', label: 'Other Notes' }
+        ];
+        // --- Generate sliders for weights ---
+        const weightsSection = document.getElementById('weightsSection');
+        attributes.forEach(attr => {
+            const div = document.createElement('div');
+            div.innerHTML = `
+                <div class="slider-label">
+                    <label for="weight_${attr.key}">${attr.label}</label>
+                    <span class="slider-value" id="weightval_${attr.key}">5</span>
+                </div>
+                <input type="range" min="1" max="10" value="5" class="slider" id="weight_${attr.key}" name="weight_${attr.key}">
+            `;
+            weightsSection.appendChild(div);
+            // Update value display
+            div.querySelector('input').addEventListener('input', function() {
+                document.getElementById(`weightval_${attr.key}`).textContent = this.value;
+            });
+        });
+        // --- Generate filter inputs ---
+        const filtersSection = document.getElementById('filtersSection');
+        attributes.forEach(attr => {
+            if (attr.filter) {
+                const div = document.createElement('div');
+                let label = attr.label;
+                let id = `${attr.filter}_${attr.key}`;
+                let minmax = attr.filter === 'max' ? 'Maximum' : 'Minimum';
+                div.innerHTML = `
+                    <label for="${id}">${minmax} ${label}:</label>
+                    <input type="${attr.type}" id="${id}" name="${id}" step="${attr.type === 'number' ? '0.01' : ''}">
+                `;
+                filtersSection.appendChild(div);
+            }
+        });
+        // --- Form submission ---
         document.getElementById('queryForm').addEventListener('submit', async function(event) {
             event.preventDefault();
-
             const resultsDiv = document.getElementById('results');
             resultsDiv.innerHTML = '<p>Loading...</p>';
-
-            const formData = {
-                max_price: parseFloat(document.getElementById('max_price').value),
-                max_school_pov: parseFloat(document.getElementById('max_school_pov').value),
-                min_facilities: parseInt(document.getElementById('min_facilities').value),
-                comments: document.getElementById('comments').value
-            };
-
+            // Collect weights
+            const weights = {};
+            attributes.forEach(attr => {
+                weights[attr.key] = parseInt(document.getElementById(`weight_${attr.key}`).value);
+            });
+            // Collect filters
+            const filters = {};
+            attributes.forEach(attr => {
+                if (attr.filter) {
+                    const val = document.getElementById(`${attr.filter}_${attr.key}`).value;
+                    if (val !== '') {
+                        filters[`${attr.filter}_${attr.key}`] = attr.type === 'number' ? parseFloat(val) : val;
+                    }
+                }
+            });
+            // Comments
+            const comments = document.getElementById('comments').value;
+            // Build payload
+            const payload = { weights, filters, comments };
             try {
                 const response = await fetch('http://127.0.0.1:8000/suggest', {
                     method: 'POST',
@@ -68,18 +120,15 @@
                         'Content-Type': 'application/json',
                         'Accept': 'application/json'
                     },
-                    body: JSON.stringify(formData)
+                    body: JSON.stringify(payload)
                 });
-
                 if (!response.ok) {
                     const errorData = await response.json().catch(() => ({ detail: 'Unknown error occurred, server did not return valid JSON.' }));
                     throw new Error(`HTTP error! status: ${response.status}, message: ${errorData.detail || 'No error detail'}`);
                 }
-
                 const data = await response.json();
-                
-                resultsDiv.innerHTML = ''; // Clear previous results
-
+                resultsDiv.innerHTML = '';
+                // --- Display LLM recommendations ---
                 if (data.answer && Array.isArray(data.answer)) {
                     if (data.answer.length === 0) {
                         resultsDiv.innerHTML = '<p>No specific recommendations from LLM, or no listings matched filters.</p>';
@@ -91,21 +140,21 @@
                             itemDiv.innerHTML = `<p class="error"><strong>Error in recommendation:</strong> ${item.error}</p>`;
                             if(item.details) itemDiv.innerHTML += `<p>Details: ${item.details}</p>`;
                         } else {
-                            itemDiv.innerHTML = `
-                                <p><strong>Location:</strong> ${item.location || 'N/A'}</p>
-                                <p><strong>Price:</strong> $${item.price !== undefined ? item.price : 'N/A'}/night</p>
-                                <p><strong>School Poverty:</strong> ${item.school_poverty !== undefined ? item.school_poverty.toFixed(1) : 'N/A'}</p>
-                                <p><strong>Facilities Nearby:</strong> ${item.facility_cnt !== undefined ? item.facility_cnt : 'N/A'}</p>
-                                <p><strong>Justification:</strong> ${item.justification || 'N/A'}</p>
-                            `;
+                            let html = '';
+                            [...displayFields, ...attributes].forEach(f => {
+                                if (item[f.key] !== undefined) {
+                                    html += `<p><strong>${f.label}:</strong> ${item[f.key]}</p>`;
+                                }
+                            });
+                            html += `<p><strong>Justification:</strong> ${item.justification || 'N/A'}</p>`;
+                            itemDiv.innerHTML = html;
                         }
                         resultsDiv.appendChild(itemDiv);
                     });
                 } else {
-                     resultsDiv.innerHTML = '<p>Received an unexpected data format from the server.</p><pre>' + JSON.stringify(data, null, 2) + '</pre>';
+                    resultsDiv.innerHTML = '<p>Received an unexpected data format from the server.</p><pre>' + JSON.stringify(data, null, 2) + '</pre>';
                 }
-
-                // Display raw hits as well (optional)
+                // --- Display raw hits as well (optional) ---
                 if (data.hits && data.hits.length > 0) {
                     const hitsHeader = document.createElement('h3');
                     hitsHeader.textContent = 'Top Matched Listings (from database)';
@@ -113,17 +162,16 @@
                     data.hits.forEach(hit => {
                         const hitDiv = document.createElement('div');
                         hitDiv.classList.add('listing');
-                        hitDiv.innerHTML = `
-                            <p><strong>Location:</strong> ${hit.location}</p>
-                            <p><strong>Price:</strong> $${hit.price}/night</p>
-                            <p><strong>School Poverty:</strong> ${hit.school_poverty.toFixed(1)}</p>
-                            <p><strong>Facilities Nearby:</strong> ${hit.facility_cnt}</p>
-                            <p><strong>Notes:</strong> ${hit.notes || 'N/A'}</p>
-                        `;
+                        let html = '';
+                        [...displayFields, ...attributes].forEach(f => {
+                            if (hit[f.key] !== undefined) {
+                                html += `<p><strong>${f.label}:</strong> ${hit[f.key]}</p>`;
+                            }
+                        });
+                        hitDiv.innerHTML = html;
                         resultsDiv.appendChild(hitDiv);
                     });
                 }
-
             } catch (error) {
                 resultsDiv.innerHTML = `
                     <p class="error"><strong>Failed to fetch recommendations:</strong> ${error.message}</p>
