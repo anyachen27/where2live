@@ -21,6 +21,7 @@ echo 'GMI_API_KEY="YOUR_KEY"' > .env
 
 
 ## 2.  Prepare Data (one-time)
+Drop the us_housing_listings CSV in data/processed/ (currently in .gitignore, but this CSV file will be store in the repository)
 ```bash
 # build json blobs & populate chromadb
 python scripts/build_blobs.py

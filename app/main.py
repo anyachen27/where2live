@@ -84,7 +84,7 @@ def gmi_chat(prompt: str) -> str:
                 "  • More beds and/or baths is only preferred if other statistics are similar, or if the user sets a hard filter for them. Otherwise, use beds/baths as a tiebreaker.\n\n"
                 "RULES FOR EACH RECOMMENDATION OBJECT\n"
                 "  • Include all listing fields and the notes/description.\n"
-                "  • Add a justification (<=40 words) that is specific, references user preferences, and explains why this house is a better fit than the others.\n\n"
+                "  • Add a justification (<=40 words) that is specific, references user preferences, and explains why this house is a better fit than the others. Double-check that your reasoning is actually correct, and not the result of lack of information.\n\n"
                 "SELECTION CRITERIA\n"
                 "  1. Must satisfy all hard limits in user_prefs.filters.\n"
                 "  2. Among valid listings, rank by the weighted sum of attributes (higher weight = more important), but also use your reasoning to match user Comments/Preferences to house features and the general preferences above.\n"
@@ -170,30 +170,31 @@ def extract_json(text):
                 return json_str
     return None
 
+def to_snake_case(s):
+    return re.sub(r'[^a-zA-Z0-9]+', '_', str(s)).strip('_').lower()
+
 # Suggest endpoint
 @app.post("/suggest")
 def suggest(q: Query):
     try:
         # Weighted query string
         query_text = build_weighted_query(q.weights, q.filters, q.comments)
+        print("Weighted query string:", query_text)
         qvec = embedder.encode(query_text).tolist()
 
         # Filter for ChromaDB
         chroma_filter = {}
         if q.filters:
             for k, v in q.filters.items():
-                if isinstance(v, (int, float)):
-                    # Guess filter type by key
-                    if k.startswith("max_"):
-                        field = k[4:]
-                        chroma_filter[field] = {"$lte": v}
-                    elif k.startswith("min_"):
-                        field = k[4:]
-                        chroma_filter[field] = {"$gte": v}
-                    else:
-                        chroma_filter[k] = v
+                k_snake = to_snake_case(k)
+                if k_snake.startswith("max_"):
+                    field = k_snake[4:]
+                    chroma_filter[field] = {"$lte": v}
+                elif k_snake.startswith("min_"):
+                    field = k_snake[4:]
+                    chroma_filter[field] = {"$gte": v}
                 else:
-                    chroma_filter[k] = v
+                    chroma_filter[k_snake] = v
 
         if len(chroma_filter) == 1:
             # Only 1 filter, don't use $and
@@ -213,6 +214,8 @@ def suggest(q: Query):
             n_results=25,
             where=where
         )
+        print("ChromaDB returned N results:", len(res["metadatas"][0]))
+        print("All candidate addresses:", [m.get('house_address') for m in res["metadatas"][0]])
         metas_for_gmi = copy.deepcopy(res["metadatas"][0][:5])
 
         # If no raw hits, don't call LLM
@@ -245,7 +248,7 @@ def suggest(q: Query):
 
         # Prompt for LLM
         def build_prompt(user_params, rows):
-            context = {row.get("House Address"): row for row in rows}
+            context = {row.get("house_address"): row for row in rows}
             return textwrap.dedent(f"""
                 User preferences: {json.dumps(user_params)}.
 

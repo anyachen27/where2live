@@ -1,11 +1,3 @@
-# scripts/embed_to_chroma.py
-"""
-Load the combined Airbnb–facilities CSV, embed each row, and upsert into Chroma
-Columns expected in CSV:
-listing_id, location, latitude, longitude, zip, district_name,
-nightly_price, school_poverty, nearby_facilities, notes
-"""
-
 import pandas as pd
 import chromadb
 from chromadb.config import Settings
@@ -56,7 +48,7 @@ print(f"Embedding {len(df)} rows...")
 
 for idx, row in df.iterrows():
     row_snake = {to_snake_case(k): v for k, v in row.items()}
-    doc_id = str(row_snake.get("house_address", idx)).replace("/", "_").replace(" ", "_")
+    doc_id = f"{row_snake.get('house_address', idx)}_{idx}".replace("/", "_").replace(" ", "_")
     text = weighted_text(row)  # Now uses snake_case keys
     emb = embedder.encode(text).tolist()
     coll.add(
