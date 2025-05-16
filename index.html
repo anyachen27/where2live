@@ -40,7 +40,7 @@
         </div>
     </div>
     <script>
-        // Define the attributes from the new dataset
+        // Define attributes from new dataset
         const attributes = [
             { key: 'price', label: 'Price', filter: 'max', type: 'number' },
             { key: 'recreational_facilities', label: 'Recreational Facilities', filter: null, type: 'text' },
@@ -51,13 +51,20 @@
             { key: 'neighborhood_crime_rate', label: 'Neighborhood Crime Rate', filter: 'max', type: 'number' },
             { key: 'common_industries', label: 'Common Industries', filter: null, type: 'text' }
         ];
-        // Display-only fields
+        // Display only fields
         const displayFields = [
-            { key: 'house_address', label: 'House Address' },
-            { key: 'zip_code', label: 'Zip Code' },
-            { key: 'other_notes', label: 'Other Notes' }
+            { key: 'house_address', label: 'Address' },
+            { key: 'price', label: 'Price' },
+            { key: 'poverty_rate', label: 'Poverty Rate' },
+            { key: 'school_ranking', label: 'School Ranking' },
+            { key: 'neighborhood_crime_rate', label: 'Crime Rate' },
+            { key: 'number_of_beds', label: 'Beds' },
+            { key: 'number_of_baths', label: 'Baths' },
+            { key: 'common_industries', label: 'Industries' },
+            { key: 'recreational_facilities', label: 'Recreational Facilities' },
+            { key: 'other_notes', label: 'Notes' }
         ];
-        // --- Generate sliders for weights ---
+        // sliders for weights
         const weightsSection = document.getElementById('weightsSection');
         attributes.forEach(attr => {
             const div = document.createElement('div');
@@ -74,7 +81,7 @@
                 document.getElementById(`weightval_${attr.key}`).textContent = this.value;
             });
         });
-        // --- Generate filter inputs ---
+        // generate filter inputs
         const filtersSection = document.getElementById('filtersSection');
         attributes.forEach(attr => {
             if (attr.filter) {
@@ -89,17 +96,17 @@
                 filtersSection.appendChild(div);
             }
         });
-        // --- Form submission ---
+        // Form submission
         document.getElementById('queryForm').addEventListener('submit', async function(event) {
             event.preventDefault();
             const resultsDiv = document.getElementById('results');
             resultsDiv.innerHTML = '<p>Loading...</p>';
-            // Collect weights
+            //collect weights
             const weights = {};
             attributes.forEach(attr => {
                 weights[attr.key] = parseInt(document.getElementById(`weight_${attr.key}`).value);
             });
-            // Collect filters
+            //collect filters
             const filters = {};
             attributes.forEach(attr => {
                 if (attr.filter) {
@@ -109,9 +116,9 @@
                     }
                 }
             });
-            // Comments
+            // comments
             const comments = document.getElementById('comments').value;
-            // Build payload
+            // build payload
             const payload = { weights, filters, comments };
             try {
                 const response = await fetch('http://127.0.0.1:8000/suggest', {
@@ -128,54 +135,56 @@
                 }
                 const data = await response.json();
                 resultsDiv.innerHTML = '';
-                // --- Display LLM recommendations ---
-                if (data.answer && Array.isArray(data.answer)) {
-                    if (data.answer.length === 0) {
-                        resultsDiv.innerHTML = '<p>No specific recommendations from LLM, or no listings matched filters.</p>';
-                    }
-                    data.answer.forEach(item => {
+
+                // Handle LLM error
+                if (data.answer && data.answer.error) {
+                    resultsDiv.innerHTML = `<p class="error"><strong>LLM Error:</strong> ${data.answer.error}</p>`;
+                }
+
+                // show top 3 recs
+                if (data.answer && Array.isArray(data.answer.top_3) && data.answer.top_3.length > 0) {
+                    const topHeader = document.createElement('h3');
+                    topHeader.textContent = 'Top 3 Recommendations';
+                    resultsDiv.appendChild(topHeader);
+                    data.answer.top_3.forEach(item => {
                         const itemDiv = document.createElement('div');
                         itemDiv.classList.add('listing');
-                        if (item.error) {
-                            itemDiv.innerHTML = `<p class="error"><strong>Error in recommendation:</strong> ${item.error}</p>`;
-                            if(item.details) itemDiv.innerHTML += `<p>Details: ${item.details}</p>`;
-                        } else {
-                            let html = '';
-                            [...displayFields, ...attributes].forEach(f => {
-                                if (item[f.key] !== undefined) {
-                                    html += `<p><strong>${f.label}:</strong> ${item[f.key]}</p>`;
-                                }
-                            });
-                            html += `<p><strong>Justification:</strong> ${item.justification || 'N/A'}</p>`;
-                            itemDiv.innerHTML = html;
-                        }
-                        resultsDiv.appendChild(itemDiv);
-                    });
-                } else {
-                    resultsDiv.innerHTML = '<p>Received an unexpected data format from the server.</p><pre>' + JSON.stringify(data, null, 2) + '</pre>';
-                }
-                // --- Display raw hits as well (optional) ---
-                if (data.hits && data.hits.length > 0) {
-                    const hitsHeader = document.createElement('h3');
-                    hitsHeader.textContent = 'Top Matched Listings (from database)';
-                    resultsDiv.appendChild(hitsHeader);
-                    data.hits.forEach(hit => {
-                        const hitDiv = document.createElement('div');
-                        hitDiv.classList.add('listing');
                         let html = '';
-                        [...displayFields, ...attributes].forEach(f => {
-                            if (hit[f.key] !== undefined) {
-                                html += `<p><strong>${f.label}:</strong> ${hit[f.key]}</p>`;
+                        displayFields.forEach(f => {
+                            if (item[f.key] !== undefined) {
+                                html += `<p><strong>${f.label}:</strong> ${item[f.key]}</p>`;
                             }
                         });
-                        hitDiv.innerHTML = html;
-                        resultsDiv.appendChild(hitDiv);
+                        html += `<p><strong>Justification:</strong> ${item.justification || 'N/A'}</p>`;
+                        itemDiv.innerHTML = html;
+                        resultsDiv.appendChild(itemDiv);
+                    });
+                } else if (data.answer && !data.answer.error) {
+                    resultsDiv.innerHTML += '<p>No specific recommendations from LLM, or no listings matched filters.</p>';
+                }
+
+                // show other candidates (not top 3)
+                if (data.answer && Array.isArray(data.answer.other_candidates) && data.answer.other_candidates.length > 0) {
+                    const otherHeader = document.createElement('h3');
+                    otherHeader.textContent = 'Other Top Matched Listings (from database)';
+                    resultsDiv.appendChild(otherHeader);
+                    data.answer.other_candidates.forEach(item => {
+                        const itemDiv = document.createElement('div');
+                        itemDiv.classList.add('listing');
+                        let html = '';
+                        displayFields.forEach(f => {
+                            if (item[f.key] !== undefined) {
+                                html += `<p><strong>${f.label}:</strong> ${item[f.key]}</p>`;
+                            }
+                        });
+                        itemDiv.innerHTML = html;
+                        resultsDiv.appendChild(itemDiv);
                     });
                 }
             } catch (error) {
                 resultsDiv.innerHTML = `
                     <p class="error"><strong>Failed to fetch recommendations:</strong> ${error.message}</p>
-                    <p>Make sure the FastAPI server is running at http://127.0.0.1:8000 and check the browser console for more details.</p>
+                    <p>Make sure the FastAPI server is running at http://127.0.0.1:8000</p>
                 `;
                 console.error('Error:', error);
             }

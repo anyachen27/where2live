@@ -1,4 +1,4 @@
-# Python
+# python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -12,7 +12,7 @@ ENV/
 # macOS
 .DS_Store
 
-# Project-specific
+# for this project
 data/
 blobs/
 chroma_db/

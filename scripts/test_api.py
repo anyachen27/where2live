@@ -15,7 +15,7 @@ response = requests.post(
     json=test_query
 )
 
-# Print results
+# print results
 print("Status code:", response.status_code)
 print("\nRaw response text:")
 print(response.text)
