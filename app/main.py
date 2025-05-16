@@ -152,7 +152,15 @@ def suggest(q: Query):
                 else:
                     chroma_filter[k] = v
 
-        where = {"$and": [{k: v} for k, v in chroma_filter.items()]} if chroma_filter else None
+        if len(chroma_filter) == 1:
+            # Only one filter, don't use $and
+            k, v = next(iter(chroma_filter.items()))
+            where = {k: v}
+        elif len(chroma_filter) > 1:
+            where = {"$and": [{k: v} for k, v in chroma_filter.items()]}
+        else:
+            where = None
+
         res = coll.query(
             query_embeddings=[qvec],
             n_results=25,

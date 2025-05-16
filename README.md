@@ -184,3 +184,61 @@ If you want to test your `GMI_API_KEY` directly with the GMI service (before tes
 *   **First Run Model Download:** The first time `app/main.py` or `scripts/embed_chroma.py` runs (whichever uses `SentenceTransformer` first), it may take a moment to download the sentence transformer model (`all-MiniLM-L6-v2`).
 *   **ChromaDB Location:** The ChromaDB vector database is stored locally in the `chroma_db/` directory. This directory will be created if it doesn't exist when the application or embedding script first interacts with ChromaDB.
 *   **Data File `sf_rag_housing.csv`:** The setup assumes `data/processed/sf_rag_housing.csv` is available. Ensure you have this file and know its origin.
+
+# How to Run the Project
+
+1. **Clone the repository and set up your environment:**
+   ```bash
+   git clone <your-repository-url>
+   cd where2live
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+
+2. **Prepare your data:**
+   - Place your `us_house_listings.csv` file in `data/processed/`.
+   - Run the blob builder to create JSON blobs:
+     ```bash
+     python scripts/build_blobs.py
+     ```
+
+3. **Delete old blobs and ChromaDB data (if updating dataset):**
+   ```bash
+   rm -rf blobs/* chroma_db/*
+   ```
+
+4. **Embed the data into ChromaDB:**
+   ```bash
+   python scripts/embed_chroma.py
+   ```
+
+5. **Start the FastAPI backend:**
+   ```bash
+   uvicorn app.main:app --reload
+   ```
+   - The API will be available at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+
+6. **Open the frontend:**
+   - Recommended: Serve the frontend with a simple HTTP server:
+     ```bash
+     python -m http.server 8080
+     ```
+     Then open [http://localhost:8080/index.html](http://localhost:8080/index.html) in your browser.
+   - Alternatively, you can double-click `index.html` to open it directly, but some browsers may restrict local file access for AJAX requests.
+   - Set your attribute weights and filters, enter comments, and click "Get Recommendations".
+
+7. **(Optional) Test the API directly:**
+   - Use `curl`, Postman, or the `/docs` Swagger UI to POST to `/suggest` with a JSON body like:
+     ```json
+     {
+       "weights": {"price": 8, "school_ranking": 10, ...},
+       "filters": {"max_price": 900000, "min_school_ranking": 7},
+       "comments": "Looking for a safe, family-friendly neighborhood with good schools and parks."
+     }
+     ```
+
+---
+
+- Make sure your `.env` file contains your GMI API key for the LLM.
+- The backend and frontend are now fully integrated with the new dataset and user-driven attribute weighting.
