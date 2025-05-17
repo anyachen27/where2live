@@ -21,3 +21,5 @@ for _, row in tqdm.tqdm(df.iterrows(), total=len(df), desc="write blobs"):
         "notes":         str(row.notes)[:100]          # keep prompt small
     }
     (BLOB_DIR / f"{row.listing_id}.json").write_text(json.dumps(blob))
+
+    
