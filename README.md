@@ -29,14 +29,14 @@ python scripts/embed_chroma.py
 ```
 
 
-## 3  Start Backend
+## 3.  Start Backend
 ```bash
 source .venv/bin/activate
 uvicorn app.main:app --reload       # http://127.0.0.1:8000/docs
 ```
 
 
-## 4  Serve Frontend
+## 4.  Serve Frontend
 _Open 2nd terminal, activate same venv, then:_
 ```bash
 source .venv/bin/activate
