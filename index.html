@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Where2Live Simple Frontend</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }
+        .container { background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        label { display: block; margin-top: 10px; font-weight: bold; }
+        input[type="number"], input[type="text"], select { width: calc(100% - 22px); padding: 10px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        .slider-label { display: flex; justify-content: space-between; align-items: center; }
+        .slider-value { margin-left: 10px; font-weight: normal; }
+        .slider { width: 100%; }
+        button { background-color: #007bff; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 20px; }
+        button:hover { background-color: #0056b3; }
+        #results { margin-top: 20px; padding: 10px; background-color: #e9ecef; border-radius: 4px; }
+        h2 { color: #007bff; }
+        .listing { border-bottom: 1px solid #ccc; padding-bottom: 10px; margin-bottom: 10px; }
+        .listing:last-child { border-bottom: none; }
+        .listing p { margin: 5px 0; }
+        .error { color: red; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Where2Live Recommendation Finder</h2>
+        <form id="queryForm">
+            <h3>Rank the importance of each attribute (1 = not important, 10 = most important):</h3>
+            <div id="weightsSection"></div>
+            <h3>Set hard filters (optional):</h3>
+            <div id="filtersSection"></div>
+            <label for="comments">Comments / Preferences:</label>
+            <input type="text" id="comments" name="comments" value="Looking for a safe, family-friendly neighborhood with good schools and parks.">
+            <button type="submit">Get Recommendations</button>
+        </form>
+        <h2>Results</h2>
+        <div id="results">
+            <p>Submit your preferences to see recommendations here.</p>
+        </div>
+    </div>
+    <script>
+        // Define attributes from new dataset
+        const attributes = [
+            { key: 'price', label: 'Price', filter: 'max', type: 'number' },
+            { key: 'recreational_facilities', label: 'Recreational Facilities', filter: null, type: 'text' },
+            { key: 'poverty_rate', label: 'Poverty Rate', filter: 'max', type: 'number' },
+            { key: 'number_of_beds', label: 'Number of Beds', filter: 'min', type: 'number' },
+            { key: 'number_of_baths', label: 'Number of Baths', filter: 'min', type: 'number' },
+            { key: 'school_ranking', label: 'School Ranking', filter: 'min', type: 'number' },
+            { key: 'neighborhood_crime_rate', label: 'Neighborhood Crime Rate', filter: 'max', type: 'number' },
+            { key: 'common_industries', label: 'Common Industries', filter: null, type: 'text' }
+        ];
+        // Display only fields
+        const displayFields = [
+            { key: 'house_address', label: 'Address' },
+            { key: 'price', label: 'Price' },
+            { key: 'poverty_rate', label: 'Poverty Rate' },
+            { key: 'school_ranking', label: 'School Ranking' },
+            { key: 'neighborhood_crime_rate', label: 'Crime Rate' },
+            { key: 'number_of_beds', label: 'Beds' },
+            { key: 'number_of_baths', label: 'Baths' },
+            { key: 'common_industries', label: 'Industries' },
+            { key: 'recreational_facilities', label: 'Recreational Facilities' },
+            { key: 'other_notes', label: 'Notes' }
+        ];
+        // sliders for weights
+        const weightsSection = document.getElementById('weightsSection');
+        attributes.forEach(attr => {
+            const div = document.createElement('div');
+            div.innerHTML = `
+                <div class="slider-label">
+                    <label for="weight_${attr.key}">${attr.label}</label>
+                    <span class="slider-value" id="weightval_${attr.key}">5</span>
+                </div>
+                <input type="range" min="1" max="10" value="5" class="slider" id="weight_${attr.key}" name="weight_${attr.key}">
+            `;
+            weightsSection.appendChild(div);
+            // Update value display
+            div.querySelector('input').addEventListener('input', function() {
+                document.getElementById(`weightval_${attr.key}`).textContent = this.value;
+            });
+        });
+        // generate filter inputs
+        const filtersSection = document.getElementById('filtersSection');
+        attributes.forEach(attr => {
+            if (attr.filter) {
+                const div = document.createElement('div');
+                let label = attr.label;
+                let id = `${attr.filter}_${attr.key}`;
+                let minmax = attr.filter === 'max' ? 'Maximum' : 'Minimum';
+                div.innerHTML = `
+                    <label for="${id}">${minmax} ${label}:</label>
+                    <input type="${attr.type}" id="${id}" name="${id}" step="${attr.type === 'number' ? '0.01' : ''}">
+                `;
+                filtersSection.appendChild(div);
+            }
+        });
+        // Form submission
+        document.getElementById('queryForm').addEventListener('submit', async function(event) {
+            event.preventDefault();
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<p>Loading...</p>';
+            //collect weights
+            const weights = {};
+            attributes.forEach(attr => {
+                weights[attr.key] = parseInt(document.getElementById(`weight_${attr.key}`).value);
+            });
+            //collect filters
+            const filters = {};
+            attributes.forEach(attr => {
+                if (attr.filter) {
+                    const val = document.getElementById(`${attr.filter}_${attr.key}`).value;
+                    if (val !== '') {
+                        filters[`${attr.filter}_${attr.key}`] = attr.type === 'number' ? parseFloat(val) : val;
+                    }
+                }
+            });
+            // comments
+            const comments = document.getElementById('comments').value;
+            // build payload
+            const payload = { weights, filters, comments };
+            try {
+                const response = await fetch('http://127.0.0.1:8000/suggest', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ detail: 'Unknown error occurred, server did not return valid JSON.' }));
+                    throw new Error(`HTTP error! status: ${response.status}, message: ${errorData.detail || 'No error detail'}`);
+                }
+                const data = await response.json();
+                resultsDiv.innerHTML = '';
+
+                // Handle LLM error
+                if (data.answer && data.answer.error) {
+                    resultsDiv.innerHTML = `<p class="error"><strong>LLM Error:</strong> ${data.answer.error}</p>`;
+                }
+
+                // show top 3 recs
+                if (data.answer && Array.isArray(data.answer.top_3) && data.answer.top_3.length > 0) {
+                    const topHeader = document.createElement('h3');
+                    topHeader.textContent = 'Top 3 Recommendations';
+                    resultsDiv.appendChild(topHeader);
+                    data.answer.top_3.forEach(item => {
+                        const itemDiv = document.createElement('div');
+                        itemDiv.classList.add('listing');
+                        let html = '';
+                        displayFields.forEach(f => {
+                            if (item[f.key] !== undefined) {
+                                html += `<p><strong>${f.label}:</strong> ${item[f.key]}</p>`;
+                            }
+                        });
+                        html += `<p><strong>Justification:</strong> ${item.justification || 'N/A'}</p>`;
+                        itemDiv.innerHTML = html;
+                        resultsDiv.appendChild(itemDiv);
+                    });
+                } else if (data.answer && !data.answer.error) {
+                    resultsDiv.innerHTML += '<p>No specific recommendations from LLM, or no listings matched filters.</p>';
+                }
+
+                // show other candidates (not top 3)
+                if (data.answer && Array.isArray(data.answer.other_candidates) && data.answer.other_candidates.length > 0) {
+                    const otherHeader = document.createElement('h3');
+                    otherHeader.textContent = 'Other Top Matched Listings (from database)';
+                    resultsDiv.appendChild(otherHeader);
+                    data.answer.other_candidates.forEach(item => {
+                        const itemDiv = document.createElement('div');
+                        itemDiv.classList.add('listing');
+                        let html = '';
+                        displayFields.forEach(f => {
+                            if (item[f.key] !== undefined) {
+                                html += `<p><strong>${f.label}:</strong> ${item[f.key]}</p>`;
+                            }
+                        });
+                        itemDiv.innerHTML = html;
+                        resultsDiv.appendChild(itemDiv);
+                    });
+                }
+            } catch (error) {
+                resultsDiv.innerHTML = `
+                    <p class="error"><strong>Failed to fetch recommendations:</strong> ${error.message}</p>
+                    <p>Make sure the FastAPI server is running at http://127.0.0.1:8000</p>
+                `;
+                console.error('Error:', error);
+            }
+        });
+    </script>
+</body>
+</html> 

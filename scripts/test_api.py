@@ -4,7 +4,7 @@ import json
 # Test data
 test_query = {
     "max_price": 300,
-    "max_school_pov": 50,
+    "max_school_pov": 900,
     "min_facilities": 2,
     "comments": "looking for a quiet neighborhood"
 }
@@ -15,7 +15,7 @@ response = requests.post(
     json=test_query
 )
 
-# Print results
+# print results
 print("Status code:", response.status_code)
 print("\nRaw response text:")
 print(response.text)
